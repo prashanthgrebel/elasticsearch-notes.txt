@@ -61,9 +61,9 @@ _cluster/allocation/explain
 /_cat/transforms
 /_cat/transforms/{transform_id}
 
-################################################################################################
+###########################################################################################################################################################
 
-########################################## Activity on company  Elasticsearch  All servers  ########################################################
+########################################## Activity on company  Elasticsearch  All servers  ###############################################################
 
 1. remove server  192.168.39.51 one from the Elasticsearch cluster
     curl -s -X GET '192.168.39.51:9200/cluster/settings' | tee /home/rajveer/settings$(date +%Y%m%d%H%M%S).json
@@ -79,4 +79,7 @@ _cluster/allocation/explain
 
 4. Set the exclusion rules to empty  
     curl -H 'Content-Type: application/json' -XPUT "http://192.168.39.51:9200/_cluster/settings" -d '{ "transient" :{ "cluster.routing.allocation.exclude._ip" : "" } }'
+    
+    
+ ##########################################################################################################################################################
 
