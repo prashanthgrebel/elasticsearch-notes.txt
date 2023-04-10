@@ -61,3 +61,22 @@ _cluster/allocation/explain
 /_cat/transforms
 /_cat/transforms/{transform_id}
 
+################################################################################################
+
+########################################## Activity on company  Elasticsearch  All servers  ########################################################
+
+1. remove server  192.168.39.51 one from the Elasticsearch cluster
+    curl -s -X GET '192.168.39.51:9200/cluster/settings' | tee /home/rajveer/settings$(date +%Y%m%d%H%M%S).json
+    curl -H 'Content-Type: application/json' -XPUT "http://192.168.39.51:9200/_cluster/settings" -d '{ "transient" :{ "cluster.routing.allocation.exclude._ip" : "192.168.39.50" } }'
+
+2. check continue below command and wait until relocating_shards attribute shows value as 0 (zero)
+    curl -XGET "http://192.168.39.51:9200/_cluster/health?pretty"
+    Curl -XGET http://192.168.39.51:9200/_cat/shards
+
+3. once relocating_shards attribute shows value as 0 (zero) (stop Elasticsearch service on 192.168.39.50)
+    check and wait unitl cluster health is GREEN
+    curl -XGET "http://192.168.39.51:9200/_cluster/health?pretty"
+
+4. Set the exclusion rules to empty  
+    curl -H 'Content-Type: application/json' -XPUT "http://192.168.39.51:9200/_cluster/settings" -d '{ "transient" :{ "cluster.routing.allocation.exclude._ip" : "" } }'
+
