@@ -22,6 +22,9 @@ http://192.168.xx.xx:9200/_cat/nodes?v&pretty
 
 _cluster/allocation/explain
 
+#check Relocating shards status / details
+http://localhost:9200/_cat/recovery?active_only=true&v
+
 =^.^=
 /_cat/allocation
 /_cat/shards
