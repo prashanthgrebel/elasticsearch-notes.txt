@@ -1,1 +1,150 @@
+#!/bin/bash
+#modified by : Rajveer Singh
+# modify : Added Mail alert and lock file so that script  wont be execute if already runnig.....
+MAIL="linux@justdial.com"
+LOCKFILE="/tmp/elastic_daily_backup_new.lock"
 
+DATE=$(date +%Y%m%d)
+INTRVL=$(date +%H00)
+PRVHOUR=$(date +%H00 -d "18 hour ago")
+
+SDATE=$(date +%d-%m-%Y-%T)
+
+CLEANUP=$(date +%Y%m%d -d "1 days ago")
+#CLEANUP="20220831"
+USERIP="192.168.38.50"
+GBOTIP="192.168.38.60"
+
+
+if [ -e "$LOCKFILE" ];then
+
+	echo "Script $0 already running.... on 192.168.38.50 Exited" | mail -s "Failed: - Elasticsearch backup for category on 192.168.38.50 at `date`" -r jdalerts@justdial.com ${MAIL}
+	sh /scripts/standard_sms_sending_script.sh -m "Failed: Category elastic user data scripts already running.... on 192.168.38.50 Exited at $SDATE" -f /scripts/sms_elastic_daily_backup_new.txt
+	exit 1
+else
+	echo "Creating lock file $LOCKFILE"
+	touch $LOCKFILE
+
+fi
+
+INDEX_LIST=$(curl -s -X GET "${USERIP}:9200/_cat/indices?pretty" | awk '{print $3}' | egrep -v ".elastichq" | xargs | sed -e 's/ /,/g')
+
+SSH_ARGS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -q"
+
+line () {
+  echo "-----------------------------------------------"
+}
+
+sh /scripts/standard_sms_sending_script.sh -m "Category elastic user data snapshot process started at $SDATE" -f /scripts/sms_elastic_daily_backup_new.txt
+
+# Clean up data
+
+echo "Clean-up old data"
+curl -X DELETE "${USERIP}:9200/_snapshot/esbackup_category_elastic_${CLEANUP}?pretty"
+curl -X DELETE "${GBOTIP}:9200/_snapshot/esbackup_category_elastic_${CLEANUP}?pretty"
+
+echo "Removing backup folder"
+rm -rf /Elastic_backup/category_elastic_bkp_${CLEANUP}
+
+echo -e "##### Start Time : `date` #####\n"
+
+echo -e "STEP:1 Registering Repository\n"
+
+curl -f -X PUT "${USERIP}:9200/_snapshot/esbackup_category_elastic_${DATE}?pretty" -H 'Content-Type: application/json' -d "
+ {
+   \"type\": \"fs\",
+   \"settings\": {
+     \"location\": \"/Elastic_backup/category_elastic_bkp_${DATE}\",
+     \"compress\": true
+   }
+ } 
+"
+
+echo -e "STEP:2 Taking snapshot @ `date`\n"
+
+curl -f -X PUT "${USERIP}:9200/_snapshot/esbackup_category_elastic_${DATE}/category_elastic_snapshot_${DATE}?wait_for_completion=true&pretty" -H 'Content-Type: application/json' -d "
+{
+  \"indices\": \"${INDEX_LIST}\",
+  \"ignore_unavailable\": true,
+  \"include_global_state\": false
+  }
+}
+"
+[ $? -eq 0 ] && echo "Snapshot taken sucessfully from ${USERIP} cluster @ `date`"
+
+## Restore 
+
+echo -e "STEP:3 Registering Repository on ${GBOTIP}\n"
+
+curl -f -X PUT "${GBOTIP}:9200/_snapshot/esbackup_category_elastic_${DATE}?pretty" -H 'Content-Type: application/json' -d "
+ {
+   \"type\": \"fs\",
+   \"settings\": {
+     \"location\": \"/Elastic_backup/category_elastic_bkp_${DATE}\",
+     \"compress\": true
+   }
+ } 
+"
+
+echo -e "STEP:4 Restore data into gbot cluster @ `date`\n"
+
+for INDEX in ${INDEX_LIST//,/ }
+do
+
+echo $INDEX
+curl -X POST "${GBOTIP}:9200/_snapshot/esbackup_category_elastic_${DATE}/category_elastic_snapshot_${DATE}/_restore?pretty" -H 'Content-Type: application/json' -d"
+{
+  \"indices\": \"$INDEX\",
+  \"ignore_unavailable\": true,
+  \"include_global_state\": false,              
+  \"rename_pattern\": \"(.+)\",
+  \"rename_replacement\": \"${INDEX}_${DATE}\",
+  \"include_aliases\": false
+}
+"
+
+echo -e "\nWaiting for restore - ${INDEX}_${DATE} Index Started at `date`"
+total=$(echo "`curl --silent -X GET "${GBOTIP}:9200/${INDEX}_${DATE}/_stats?pretty" | jq -r '._shards.total'` / 2" | bc)
+
+while true
+do
+   [ `curl --silent -X GET "${GBOTIP}:9200/${INDEX}_${DATE}/_stats?pretty" | jq -r '._shards.successful'` -gt "$total" ] && echo "Exiting" && break
+   echo "Waiting for restore - ${INDEX}_${DATE} Index"
+
+   sleep 5
+done
+
+echo -e "Completion for restore - ${INDEX}_${DATE} Index Completed at `date`\n"
+
+curl -X POST "${GBOTIP}:9200/_aliases?pretty" -H 'Content-Type: application/json' -d"
+{
+  \"actions\" : [
+    { \"add\":  { \"index\": \"${INDEX}_${DATE}\", \"alias\": \"$INDEX\" } },
+    { \"remove_index\": { \"index\": \"${INDEX}_${CLEANUP}\" } }
+  ]
+}
+"
+
+curl -X POST "${GBOTIP}:9200/_aliases?pretty" -H 'Content-Type: application/json' -d"
+{
+  \"actions\" : [
+    { \"add\":  { \"index\": \"${INDEX}_${DATE}\", \"alias\": \"$INDEX\" } }
+  ]
+}
+"
+
+done
+
+[ $? -eq 0 ] && echo -e "Restored data sucessfully into gbot cluster @ `date`\n"
+
+echo "##### End Time : `date` #####"
+
+if [ $? -eq 0 ];then
+	sh /scripts/standard_sms_sending_script.sh -m "Category elastic user data restored to Category elastic gbot servers at `date +%d-%m-%Y-%T`" -f /scripts/sms_elastic_daily_backup_new.txt
+fi
+
+line
+
+echo "Removing lock file $LOCKFILE"
+
+rm -fv $LOCKFILE
